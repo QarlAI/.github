@@ -1,0 +1,125 @@
+name: CI/CD - Shared Build, Push, and Sync Infra
+
+on:
+  workflow_call:
+    inputs:
+      target_env:
+        required: true
+        type: string
+        description: "Environment name (e.g., develop, main)"
+      infra_yaml_path:
+        required: true
+        type: string
+        description: "Path to the values file (e.g., helm/qarl-studio/images.yaml)"
+      yaml_key_prefix:
+        required: true
+        type: string
+        description: "The root key in the yaml (e.g., .qarl-backend-api)"
+    secrets:
+      INFRA_REPO_PAT:
+        required: true
+
+jobs:
+  build-and-sync:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target_env }}
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout Service Repo
+        uses: actions/checkout@v4
+
+      - name: Set Deployment Metadata
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha || github.sha }}" | cut -c1-7)
+          
+          if [[ "${{ github.event.pull_request.merged }}" == "true" ]] || [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "repo=dockerimg" >> $GITHUB_OUTPUT
+          else
+            echo "repo=dockerimgstaging" >> $GITHUB_OUTPUT
+          fi
+          echo "tag=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Authenticate to Google Cloud
+        if: steps.meta.outputs.tag != ''
+        id: auth
+        uses: google-github-actions/auth@v3 # Using v3!
+        with:
+          token_format: access_token
+          # Hardcoded WIF so app repos don't need to know it
+          workload_identity_provider: 'projects/1093867875731/locations/global/workloadIdentityPools/github/providers/github-provider'
+          service_account: 'qarl-studio-backend-sa@qarl-studio.iam.gserviceaccount.com'
+      
+      - name: Authenticate Docker to GAR
+        if: steps.meta.outputs.tag != ''
+        run: gcloud auth configure-docker us-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        if: steps.meta.outputs.tag != ''
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      - name: Build and Push
+        if: steps.meta.outputs.tag != ''
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ github.event.repository.name }}:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+        
+      - name: Checkout Infra Repo
+        if: steps.meta.outputs.tag != ''
+        uses: actions/checkout@v4
+        with:
+          repository: QarlAI/qarl-studio-infra
+          token: ${{ secrets.INFRA_REPO_PAT }}
+          path: infra-repo
+          # Crucial for finding the existing branch to prevent overwriting
+          fetch-depth: 0 
+
+      - name: Pull Latest Sync Branch (If Exists)
+        if: steps.meta.outputs.tag != ''
+        run: |
+          cd infra-repo
+          SYNC_BRANCH="sync/${{ github.head_ref || github.ref_name }}"
+          
+          # Check if another repo already created the sync branch
+          if git ls-remote --exit-code --heads origin $SYNC_BRANCH; then
+            echo "Branch $SYNC_BRANCH exists! Checking it out to append changes."
+            git checkout $SYNC_BRANCH
+            git pull origin $SYNC_BRANCH --rebase
+          else
+            echo "Branch $SYNC_BRANCH does not exist yet. Proceeding from main."
+          fi
+
+      - name: Update images.yaml
+        if: steps.meta.outputs.tag != ''
+        run: |
+          cd infra-repo
+          SERVICE_NAME="${{ github.event.repository.name }}"
+          NEW_TAG="${{ steps.meta.outputs.tag }}"
+          REPO_PATH="us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${SERVICE_NAME}"
+          
+          # Dynamic yq update using the inputs
+          yq -i "${{ inputs.yaml_key_prefix }}.${SERVICE_NAME}.image.repository = \"${REPO_PATH}\"" ${{ inputs.infra_yaml_path }}
+          yq -i "${{ inputs.yaml_key_prefix }}.${SERVICE_NAME}.image.tag = \"${NEW_TAG}\"" ${{ inputs.infra_yaml_path }}
+
+      - name: Create or Update Infra PR
+        if: steps.meta.outputs.tag != ''
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.INFRA_REPO_PAT }}
+          path: infra-repo
+          branch: sync/${{ github.head_ref || github.ref_name }}
+          title: "Infra Update: ${{ github.head_ref || github.ref_name }}"
+          commit-message: "deploy: update ${{ github.event.repository.name }} to ${{ steps.meta.outputs.tag }}"
+          body: |
+            Automated image update from `${{ github.event.repository.name }}`.
+            **Tag:** `${{ steps.meta.outputs.tag }}`
+            **Registry:** `${{ steps.meta.outputs.repo }}`
