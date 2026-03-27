@@ -147,7 +147,6 @@ jobs:
         if: steps.meta.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.INFRA_REPO_PAT }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           THIS_SUMMARY: ${{ steps.normalize.outputs.summary }}
           SERVICE_NAME: ${{ inputs.target_repo }}
         run: |
@@ -155,6 +154,7 @@ jobs:
           NEW_TAG="${{ steps.meta.outputs.tag }}"
           REPO_PATH="us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${SERVICE_NAME}"
           SYNC_BRANCH="sync/${{ github.head_ref || github.ref_name }}"
+          ANTHROPIC_API_KEY="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"
 
           # 1. Setup Git Identity
           git config user.name "GitOps Bot"
