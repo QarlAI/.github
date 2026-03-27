@@ -27,6 +27,8 @@ on:
     secrets:
       INFRA_REPO_PAT:
         required: true
+      ANTHROPIC_API_KEY:
+        required: true
 
 jobs:
   build-and-sync:
@@ -44,13 +46,64 @@ jobs:
         id: meta
         run: |
           SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha || github.sha }}" | cut -c1-7)
-          
+
           if [[ "${{ github.event.pull_request.merged }}" == "true" ]] || [[ "${{ github.event_name }}" != "pull_request" ]]; then
             echo "repo=dockerimg" >> $GITHUB_OUTPUT
           else
             echo "repo=dockerimgstaging" >> $GITHUB_OUTPUT
           fi
           echo "tag=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      # -----------------------------------------------------------------------
+      # Call 1: Normalize this service's PR into a structured summary.
+      # Only runs on pull_request events (skipped on direct push/merge).
+      # -----------------------------------------------------------------------
+      - name: Normalize Service PR
+        id: normalize
+        if: github.event_name == 'pull_request'
+        env:
+          SERVICE_NAME: ${{ inputs.target_repo }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+
+          ANTHROPIC_API_KEY="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"
+          PROMPT=$(jq -n \
+            --arg service  "$SERVICE_NAME" \
+            --arg pr_url   "$PR_URL" \
+            --arg pr_title "$PR_TITLE" \
+            --arg pr_body  "${PR_BODY:-*(no description provided)*}" \
+            '{
+              role: "user",
+              content: ("You are a technical writer extracting structured deployment info from a service pull request.\n\nService: " + $service + "\nPR title: " + $pr_title + "\nPR URL: " + $pr_url + "\nPR body:\n" + $pr_body + "\n\n---\n\nExtract and return ONLY the following Markdown structure. If information for a section is not present, write \"N/A\".\n\nDo not add any preamble or commentary outside the structure.\n\n## " + $service + "\n\n**PR:** <link>\n\n**Changes:**\n<bullet list of changes>\n\n**How to test:**\n<bullet list or N/A>\n\n**Updated containers:**\n<bullet list of container/image names or N/A>")
+            }')
+
+          RESPONSE=$(curl --silent --fail \
+            "https://api.anthropic.com/v1/messages" \
+            -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "$(jq -n \
+              --arg model "claude-sonnet-4-20250514" \
+              --argjson msg "$PROMPT" \
+              '{model: $model, max_tokens: 1024, messages: [$msg]}'
+            )")
+
+          NORMALIZED=$(echo "$RESPONSE" | jq -r '.content[0].text // empty')
+
+          if [[ -z "$NORMALIZED" ]]; then
+            echo "⚠️  Claude normalization returned nothing — using raw PR title as fallback."
+            NORMALIZED="## ${SERVICE_NAME}\n\n**PR:** ${PR_URL}\n\n**Changes:** ${PR_TITLE}\n\n**How to test:** N/A\n\n**Updated containers:** N/A"
+          fi
+
+          {
+            echo "summary<<EOF"
+            echo "$NORMALIZED"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
 
       - name: Authenticate to Google Cloud
         if: steps.meta.outputs.tag != ''
@@ -60,7 +113,7 @@ jobs:
           token_format: access_token
           workload_identity_provider: 'projects/1093867875731/locations/global/workloadIdentityPools/github/providers/github-provider'
           service_account: 'qarl-studio-backend-sa@qarl-studio.iam.gserviceaccount.com'
-      
+
       - name: Authenticate Docker to GAR
         if: steps.meta.outputs.tag != ''
         run: gcloud auth configure-docker us-docker.pkg.dev --quiet
@@ -77,11 +130,10 @@ jobs:
         with:
           context: .
           push: true
-          # Using your target_repo input here!
           tags: us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ inputs.target_repo }}:${{ steps.meta.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-        
+
       - name: Checkout Infra Repo
         if: steps.meta.outputs.tag != ''
         uses: actions/checkout@v4
@@ -89,32 +141,34 @@ jobs:
           repository: QarlAI/test-repo2
           token: ${{ secrets.INFRA_REPO_PAT }}
           path: infra-repo
-          fetch-depth: 0 
+          fetch-depth: 0
 
-      - name: GitOps Sync & Create PR
+      - name: GitOps Sync & Create/Update PR
         if: steps.meta.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.INFRA_REPO_PAT }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          THIS_SUMMARY: ${{ steps.normalize.outputs.summary }}
+          SERVICE_NAME: ${{ inputs.target_repo }}
         run: |
           cd infra-repo
-          SERVICE_NAME="${{ inputs.target_repo }}"
           NEW_TAG="${{ steps.meta.outputs.tag }}"
           REPO_PATH="us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${SERVICE_NAME}"
           SYNC_BRANCH="sync/${{ github.head_ref || github.ref_name }}"
-          
+
           # 1. Setup Git Identity
           git config user.name "GitOps Bot"
           git config user.email "bot@qarl.ai"
           git fetch origin
-          
-          # 2. Smart Checkout (Stack commits if branch exists)
+
+          # 2. Smart Checkout
           if git ls-remote --exit-code --heads origin "$SYNC_BRANCH"; then
-            echo "✅ Branch exists. Checking out and pulling latest..."
             git checkout "$SYNC_BRANCH"
             git pull origin "$SYNC_BRANCH" --rebase
           else
-            echo "🌱 Branch does not exist. Creating new branch..."
             git checkout -b "$SYNC_BRANCH"
           fi
-          
+
           # 3. Apply YQ Updates
           PREFIX="${{ inputs.yaml_key_prefix }}"
           if [ -z "$PREFIX" ]; then
@@ -122,31 +176,86 @@ jobs:
           else
             YQ_PATH="${PREFIX}.${SERVICE_NAME}"
           fi
-          
+
           yq -i "${YQ_PATH}.image.repository = \"${REPO_PATH}\"" ${{ inputs.images_yaml_path }}
           yq -i "${YQ_PATH}.image.tag = \"${NEW_TAG}\"" ${{ inputs.images_yaml_path }}
-          
+
           # 4. Commit and Push
           git add ${{ inputs.images_yaml_path }}
           if git diff-index --quiet HEAD; then
             echo "No changes to commit."
-            exit 0
+          else
+            git commit -m "deploy: update ${SERVICE_NAME} to ${NEW_TAG}"
+            git push origin "$SYNC_BRANCH"
           fi
-          
-          git commit -m "deploy: update ${SERVICE_NAME} to ${NEW_TAG}"
-          git push origin "$SYNC_BRANCH"
-          
-          # 5. Create PR using official GitHub CLI if it doesn't exist
-          export GH_TOKEN=${{ secrets.INFRA_REPO_PAT }}
-          PR_EXISTS=$(gh pr list --head "$SYNC_BRANCH" --json number --jq 'length')
-          
-          if [ "$PR_EXISTS" -eq "0" ]; then
-            echo "Creating new PR..."
+
+          # ---------------------------------------------------------------
+          # 5. Build the infra PR body.
+          #
+          # First PR for this branch:
+          #   → Write THIS_SUMMARY directly.
+          #
+          # PR already exists (another service already wrote their summary):
+          #   → Call 2: Ask Claude to merge EXISTING_BODY + THIS_SUMMARY
+          #     into one cohesive unified description.
+          # ---------------------------------------------------------------
+
+          PR_NUMBER=$(gh pr list \
+            --repo QarlAI/test-repo2 \
+            --head "$SYNC_BRANCH" \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [[ -z "$PR_NUMBER" ]]; then
+            # ── First service in: just write the normalized summary ──────────
+            echo "Creating new infra PR with normalized summary..."
+            NEW_BODY="${THIS_SUMMARY}"
+
             gh pr create \
-              --base ${{ inputs.target_branch }} \
+              --repo QarlAI/test-repo2 \
+              --base "${{ inputs.target_branch }}" \
               --head "$SYNC_BRANCH" \
               --title "Infra Update: ${{ github.head_ref || github.ref_name }}" \
-              --body "Automated image update from \`${SERVICE_NAME}\`."
+              --body "$NEW_BODY"
+
           else
-            echo "✅ PR already exists. Our push just updated it automatically!"
+            # ── Subsequent service: merge existing summary + new one ─────────
+            echo "PR #${PR_NUMBER} exists — merging summaries with Claude..."
+
+            EXISTING_BODY=$(gh pr view "$PR_NUMBER" \
+              --repo QarlAI/test-repo2 \
+              --json body --jq '.body')
+
+            # Call 2: Merge
+            MERGE_PROMPT=$(jq -n \
+              --arg existing "$EXISTING_BODY" \
+              --arg incoming "$THIS_SUMMARY" \
+              '{
+                role: "user",
+                content: ("You are a technical writer maintaining a GitOps pull request description.\n\nThe PR description below already contains structured summaries for one or more services. A new service has just been added to this deployment.\n\n## Existing PR description\n\n" + $existing + "\n\n---\n\n## New service summary to incorporate\n\n" + $incoming + "\n\n---\n\nMerge the two into a single cohesive PR description. Rules:\n- Keep the same per-service structure: **PR**, **Changes**, **How to test**, **Updated containers**.\n- Add the new service as its own ## section.\n- Add or update a ## Summary section at the top that gives a one or two sentence overview of the whole deployment.\n- Do not remove or alter existing service sections except to fix obvious duplication.\n- Output only the final Markdown. No preamble.")
+              }')
+
+            MERGE_RESPONSE=$(curl --silent --fail \
+              "https://api.anthropic.com/v1/messages" \
+              -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "content-type: application/json" \
+              -d "$(jq -n \
+                --arg model "claude-sonnet-4-20250514" \
+                --argjson msg "$MERGE_PROMPT" \
+                '{model: $model, max_tokens: 2048, messages: [$msg]}'
+              )")
+
+            MERGED=$(echo "$MERGE_RESPONSE" | jq -r '.content[0].text // empty')
+
+            if [[ -z "$MERGED" ]]; then
+              echo "⚠️  Claude merge returned nothing — appending new summary without merging."
+              MERGED=$(printf '%s\n\n%s' "$EXISTING_BODY" "$THIS_SUMMARY")
+            fi
+
+            gh pr edit "$PR_NUMBER" \
+              --repo QarlAI/test-repo2 \
+              --body "$MERGED"
+
+            echo "✅ PR #${PR_NUMBER} description updated."
           fi
