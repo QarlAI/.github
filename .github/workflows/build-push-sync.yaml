@@ -20,7 +20,8 @@ on:
         type: string
         description: "Target repo to update"
       yaml_key_prefix:
-        required: true
+        required: false
+        default: ""
         type: string
         description: "The root key in the yaml (e.g., .qarl-backend-api)"
     secrets:
