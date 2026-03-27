@@ -95,14 +95,15 @@ jobs:
         run: |
           cd infra-repo
           SYNC_BRANCH="sync/${{ github.head_ref || github.ref_name }}"
-          
           if git ls-remote --exit-code --heads origin $SYNC_BRANCH; then
             echo "Branch $SYNC_BRANCH exists! Checking it out to append changes."
             git checkout $SYNC_BRANCH
             git pull origin $SYNC_BRANCH --rebase
+            
           else
             echo "Branch $SYNC_BRANCH does not exist yet. Proceeding from main."
           fi
+          
 
       - name: Update images.yaml
         if: steps.meta.outputs.tag != ''
@@ -111,10 +112,17 @@ jobs:
           SERVICE_NAME="${{ inputs.target_repo }}"
           NEW_TAG="${{ steps.meta.outputs.tag }}"
           REPO_PATH="us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${SERVICE_NAME}"
-          
+          # 🔍 DEBUG: Show the file BEFORE we edit it
+          echo "================ BEFORE EDIT ================"
+          cat ${{ inputs.images_yaml_path }}
+          echo "============================================="
           # Using the correct input name: images_yaml_path
           yq -i "${{ inputs.yaml_key_prefix }}.image.repository = \"${REPO_PATH}\"" ${{ inputs.images_yaml_path }}
           yq -i "${{ inputs.yaml_key_prefix }}.image.tag = \"${NEW_TAG}\"" ${{ inputs.images_yaml_path }}
+          # 🔍 DEBUG: Show the file AFTER we edit it
+          echo "================ AFTER EDIT ================="
+          cat ${{ inputs.images_yaml_path }}
+          echo "============================================="
 
       - name: Create or Update Infra PR
         if: steps.meta.outputs.tag != ''
