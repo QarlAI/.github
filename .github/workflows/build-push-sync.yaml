@@ -99,10 +99,17 @@ jobs:
             echo "Branch $SYNC_BRANCH exists! Checking it out to append changes."
             git checkout $SYNC_BRANCH
             git pull origin $SYNC_BRANCH --rebase
+
+              
+            echo "================ BEFORE EDIT ================"
+            cat ${{ inputs.images_yaml_path }}
+            echo "============================================="
             
           else
             echo "Branch $SYNC_BRANCH does not exist yet. Proceeding from main."
           fi
+
+          
           
 
       - name: Update images.yaml (Smart Merge)
