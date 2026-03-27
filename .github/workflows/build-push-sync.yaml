@@ -27,8 +27,6 @@ on:
     secrets:
       INFRA_REPO_PAT:
         required: true
-      ANTHROPIC_API_KEY:
-        required: true
 
 jobs:
   build-and-sync:
@@ -62,12 +60,14 @@ jobs:
         id: normalize
         if: github.event_name == 'pull_request'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SERVICE_NAME: ${{ inputs.target_repo }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
+
+          ANTHROPIC_API_KEY="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"
+
           PROMPT=$(jq -n \
             --arg service  "$SERVICE_NAME" \
             --arg pr_url   "$PR_URL" \
@@ -152,10 +152,10 @@ jobs:
         if: steps.meta.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.INFRA_REPO_PAT }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           THIS_SUMMARY: ${{ steps.normalize.outputs.summary }}
           SERVICE_NAME: ${{ inputs.target_repo }}
         run: |
+          ANTHROPIC_API_KEY="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"
           cd infra-repo
           NEW_TAG="${{ steps.meta.outputs.tag }}"
           REPO_PATH="us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${SERVICE_NAME}"
