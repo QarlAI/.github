@@ -27,7 +27,8 @@ on:
     secrets:
       INFRA_REPO_PAT:
         required: true
-
+      ANTHROPIC_API_KEY:
+        required: true
 
 jobs:
   build-and-sync:
@@ -61,13 +62,12 @@ jobs:
         id: normalize
         if: github.event_name == 'pull_request'
         env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SERVICE_NAME: ${{ inputs.target_repo }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-
-          ANTHROPIC_API_KEY="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"
           PROMPT=$(jq -n \
             --arg service  "$SERVICE_NAME" \
             --arg pr_url   "$PR_URL" \
@@ -78,16 +78,22 @@ jobs:
               content: ("You are a technical writer extracting structured deployment info from a service pull request.\n\nService: " + $service + "\nPR title: " + $pr_title + "\nPR URL: " + $pr_url + "\nPR body:\n" + $pr_body + "\n\n---\n\nExtract and return ONLY the following Markdown structure. If information for a section is not present, write \"N/A\".\n\nDo not add any preamble or commentary outside the structure.\n\n## " + $service + "\n\n**PR:** <link>\n\n**Changes:**\n<bullet list of changes>\n\n**How to test:**\n<bullet list or N/A>\n\n**Updated containers:**\n<bullet list of container/image names or N/A>")
             }')
 
-          RESPONSE=$(curl --silent --fail \
+          RESPONSE=$(curl --silent --show-error \
             "https://api.anthropic.com/v1/messages" \
             -H "x-api-key: ${ANTHROPIC_API_KEY}" \
             -H "anthropic-version: 2023-06-01" \
             -H "content-type: application/json" \
             -d "$(jq -n \
-              --arg model "claude-sonnet-4-20250514" \
+              --arg model "claude-haiku-4-5-20251001" \
               --argjson msg "$PROMPT" \
               '{model: $model, max_tokens: 1024, messages: [$msg]}'
             )")
+
+          echo "Normalize API response: $RESPONSE"
+          API_ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
+          if [[ -n "$API_ERROR" ]]; then
+            echo "⚠️  Anthropic API error: $API_ERROR"
+          fi
 
           NORMALIZED=$(echo "$RESPONSE" | jq -r '.content[0].text // empty')
 
@@ -146,6 +152,7 @@ jobs:
         if: steps.meta.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.INFRA_REPO_PAT }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           THIS_SUMMARY: ${{ steps.normalize.outputs.summary }}
           SERVICE_NAME: ${{ inputs.target_repo }}
         run: |
@@ -153,7 +160,6 @@ jobs:
           NEW_TAG="${{ steps.meta.outputs.tag }}"
           REPO_PATH="us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${SERVICE_NAME}"
           SYNC_BRANCH="sync/${{ github.head_ref || github.ref_name }}"
-          ANTHROPIC_API_KEY="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"
 
           # 1. Setup Git Identity
           git config user.name "GitOps Bot"
@@ -234,16 +240,22 @@ jobs:
                 content: ("You are a technical writer maintaining a GitOps pull request description.\n\nThe PR description below already contains structured summaries for one or more services. A new service has just been added to this deployment.\n\n## Existing PR description\n\n" + $existing + "\n\n---\n\n## New service summary to incorporate\n\n" + $incoming + "\n\n---\n\nMerge the two into a single cohesive PR description. Rules:\n- Keep the same per-service structure: **PR**, **Changes**, **How to test**, **Updated containers**.\n- Add the new service as its own ## section.\n- Add or update a ## Summary section at the top that gives a one or two sentence overview of the whole deployment.\n- Do not remove or alter existing service sections except to fix obvious duplication.\n- Output only the final Markdown. No preamble.")
               }')
 
-            MERGE_RESPONSE=$(curl --silent --fail \
+            MERGE_RESPONSE=$(curl --silent --show-error \
               "https://api.anthropic.com/v1/messages" \
               -H "x-api-key: ${ANTHROPIC_API_KEY}" \
               -H "anthropic-version: 2023-06-01" \
               -H "content-type: application/json" \
               -d "$(jq -n \
-                --arg model "claude-sonnet-4-20250514" \
+                --arg model "claude-haiku-4-5-20251001" \
                 --argjson msg "$MERGE_PROMPT" \
                 '{model: $model, max_tokens: 2048, messages: [$msg]}'
               )")
+
+            echo "Merge API response: $MERGE_RESPONSE"
+            API_ERROR=$(echo "$MERGE_RESPONSE" | jq -r '.error.message // empty')
+            if [[ -n "$API_ERROR" ]]; then
+              echo "⚠️  Anthropic API error: $API_ERROR"
+            fi
 
             MERGED=$(echo "$MERGE_RESPONSE" | jq -r '.content[0].text // empty')
 
