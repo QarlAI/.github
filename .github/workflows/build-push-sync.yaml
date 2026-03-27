@@ -143,7 +143,7 @@ jobs:
         if: steps.meta.outputs.tag != ''
         uses: actions/checkout@v4
         with:
-          repository: QarlAI/test-repo2
+          repository: QarlAI/qarl-studio-infra
           token: ${{ secrets.INFRA_REPO_PAT }}
           path: infra-repo
           fetch-depth: 0
@@ -217,7 +217,7 @@ jobs:
             NEW_BODY="${THIS_SUMMARY}"
 
             gh pr create \
-              --repo QarlAI/test-repo2 \
+              --repo QarlAI/qarl-studio-infra \
               --base "${{ inputs.target_branch }}" \
               --head "$SYNC_BRANCH" \
               --title "Infra Update: ${{ github.head_ref || github.ref_name }}" \
@@ -228,7 +228,7 @@ jobs:
             echo "PR #${PR_NUMBER} exists — merging summaries with Claude..."
 
             EXISTING_BODY=$(gh pr view "$PR_NUMBER" \
-              --repo QarlAI/test-repo2 \
+              --repo QarlAI/qarl-studio-infra \
               --json body --jq '.body')
 
             # Call 2: Merge
@@ -265,7 +265,7 @@ jobs:
             fi
 
             gh pr edit "$PR_NUMBER" \
-              --repo QarlAI/test-repo2 \
+              --repo QarlAI/qarl-studio-infra \
               --body "$MERGED"
 
             echo "✅ PR #${PR_NUMBER} description updated."
