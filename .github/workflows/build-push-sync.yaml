@@ -123,11 +123,11 @@ jobs:
         if: steps.meta.outputs.tag != ''
         run: gcloud auth configure-docker us-docker.pkg.dev --quiet
 
-      # - name: Set up Docker Buildx
-      #   if: steps.meta.outputs.tag != ''
-      #   uses: docker/setup-buildx-action@v3
-      #   with:
-      #     driver: docker-container
+      - name: Set up Docker Buildx
+        if: steps.meta.outputs.tag != ''
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
 
       - name: Build and Push
         if: steps.meta.outputs.tag != ''
@@ -136,8 +136,8 @@ jobs:
           context: .
           push: true
           tags: us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ inputs.target_repo }}:${{ steps.meta.outputs.tag }}
-          # cache-from: type=gha
-          # cache-to: type=gha,mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Checkout Infra Repo
         if: steps.meta.outputs.tag != ''
