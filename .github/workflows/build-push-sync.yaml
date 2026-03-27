@@ -113,8 +113,8 @@ jobs:
           REPO_PATH="us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${SERVICE_NAME}"
           
           # Using the correct input name: images_yaml_path
-          yq -i "${{ inputs.yaml_key_prefix }}.${SERVICE_NAME}.image.repository = \"${REPO_PATH}\"" ${{ inputs.images_yaml_path }}
-          yq -i "${{ inputs.yaml_key_prefix }}.${SERVICE_NAME}.image.tag = \"${NEW_TAG}\"" ${{ inputs.images_yaml_path }}
+          yq -i ".${{ inputs.yaml_key_prefix }}.${SERVICE_NAME}.image.repository = \"${REPO_PATH}\"" ${{ inputs.images_yaml_path }}
+          yq -i ".${{ inputs.yaml_key_prefix }}.${SERVICE_NAME}.image.tag = \"${NEW_TAG}\"" ${{ inputs.images_yaml_path }}
 
       - name: Create or Update Infra PR
         if: steps.meta.outputs.tag != ''
