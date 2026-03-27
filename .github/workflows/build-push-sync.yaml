@@ -105,21 +105,49 @@ jobs:
           fi
           
 
-      - name: Update images.yaml
+      - name: Update images.yaml (Smart Merge)
         if: steps.meta.outputs.tag != ''
         run: |
           cd infra-repo
           SERVICE_NAME="${{ inputs.target_repo }}"
           NEW_TAG="${{ steps.meta.outputs.tag }}"
           REPO_PATH="us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${SERVICE_NAME}"
-          # 🔍 DEBUG: Show the file BEFORE we edit it
+          SYNC_BRANCH="sync/${{ github.head_ref || github.ref_name }}"
+          
+          echo "🏁 Target Sync Branch: $SYNC_BRANCH"
+          
+          # 1. Fetch the absolute latest from GitHub
+          git fetch origin
+          
+          # 2. Check if the PR branch already exists on GitHub
+          if git ls-remote --exit-code --heads origin "$SYNC_BRANCH"; then
+            echo "✅ PR Branch exists! Reaching into the branch to grab the already-updated images.yaml..."
+            
+            # This forcibly overwrites our local file with the one from the PR
+            git checkout origin/"$SYNC_BRANCH" -- ${{ inputs.images_yaml_path }}
+            echo "📥 Successfully pulled file from PR branch."
+          else
+            echo "❌ PR Branch does not exist yet. Using the base branch version."
+          fi
+
           echo "================ BEFORE EDIT ================"
           cat ${{ inputs.images_yaml_path }}
           echo "============================================="
-          # Using the correct input name: images_yaml_path
-          yq -i "${{ inputs.yaml_key_prefix }}.image.repository = \"${REPO_PATH}\"" ${{ inputs.images_yaml_path }}
-          yq -i "${{ inputs.yaml_key_prefix }}.image.tag = \"${NEW_TAG}\"" ${{ inputs.images_yaml_path }}
-          # 🔍 DEBUG: Show the file AFTER we edit it
+          
+          # 3. Build the YQ Path
+          PREFIX="${{ inputs.yaml_key_prefix }}"
+          if [ -z "$PREFIX" ]; then
+            YQ_PATH=".${SERVICE_NAME}"
+          else
+            YQ_PATH="${PREFIX}.${SERVICE_NAME}"
+          fi
+          
+          echo "✏️ Updating YQ path: ${YQ_PATH}"
+          
+          # 4. Apply the new tag
+          yq -i "${YQ_PATH}.image.repository = \"${REPO_PATH}\"" ${{ inputs.images_yaml_path }}
+          yq -i "${YQ_PATH}.image.tag = \"${NEW_TAG}\"" ${{ inputs.images_yaml_path }}
+
           echo "================ AFTER EDIT ================="
           cat ${{ inputs.images_yaml_path }}
           echo "============================================="
