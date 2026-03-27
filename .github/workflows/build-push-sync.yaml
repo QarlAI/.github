@@ -206,7 +206,7 @@ jobs:
           # ---------------------------------------------------------------
 
           PR_NUMBER=$(gh pr list \
-            --repo QarlAI/test-repo2 \
+            --repo QarlAI/qarl-studio-infra \
             --head "$SYNC_BRANCH" \
             --json number \
             --jq '.[0].number // empty')
