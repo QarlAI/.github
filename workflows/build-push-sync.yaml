@@ -1,0 +1,152 @@
+name: CI/CD - Shared Build, Push, and Sync Infra
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: "Environment"
+      target_branch:
+        required: true
+        type: string
+        description: "Branch name (e.g., develop, main)"
+      images_yaml_path:
+        required: true
+        type: string
+        description: "Path to the values file (e.g., helm/qarl-studio/images.yaml)"
+      target_repo:
+        required: true
+        type: string
+        description: "Target repo to update"
+      yaml_key_prefix:
+        required: false
+        default: ""
+        type: string
+        description: "The root key in the yaml (e.g., .qarl-backend-api)"
+    secrets:
+      INFRA_REPO_PAT:
+        required: true
+
+jobs:
+  build-and-sync:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout Service Repo
+        uses: actions/checkout@v4
+
+      - name: Set Deployment Metadata
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha || github.sha }}" | cut -c1-7)
+          
+          if [[ "${{ github.event.pull_request.merged }}" == "true" ]] || [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "repo=dockerimg" >> $GITHUB_OUTPUT
+          else
+            echo "repo=dockerimgstaging" >> $GITHUB_OUTPUT
+          fi
+          echo "tag=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Authenticate to Google Cloud
+        if: steps.meta.outputs.tag != ''
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          token_format: access_token
+          workload_identity_provider: 'projects/1093867875731/locations/global/workloadIdentityPools/github/providers/github-provider'
+          service_account: 'qarl-studio-backend-sa@qarl-studio.iam.gserviceaccount.com'
+      
+      - name: Authenticate Docker to GAR
+        if: steps.meta.outputs.tag != ''
+        run: gcloud auth configure-docker us-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        if: steps.meta.outputs.tag != ''
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      - name: Build and Push
+        if: steps.meta.outputs.tag != ''
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # Using your target_repo input here!
+          tags: us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ inputs.target_repo }}:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+        
+      - name: Checkout Infra Repo
+        if: steps.meta.outputs.tag != ''
+        uses: actions/checkout@v4
+        with:
+          repository: QarlAI/test-repo2
+          token: ${{ secrets.INFRA_REPO_PAT }}
+          path: infra-repo
+          fetch-depth: 0 
+
+      - name: GitOps Sync & Create PR
+        if: steps.meta.outputs.tag != ''
+        run: |
+          cd infra-repo
+          SERVICE_NAME="${{ inputs.target_repo }}"
+          NEW_TAG="${{ steps.meta.outputs.tag }}"
+          REPO_PATH="us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${SERVICE_NAME}"
+          SYNC_BRANCH="sync/${{ github.head_ref || github.ref_name }}"
+          
+          # 1. Setup Git Identity
+          git config user.name "GitOps Bot"
+          git config user.email "bot@qarl.ai"
+          git fetch origin
+          
+          # 2. Smart Checkout (Stack commits if branch exists)
+          if git ls-remote --exit-code --heads origin "$SYNC_BRANCH"; then
+            echo "✅ Branch exists. Checking out and pulling latest..."
+            git checkout "$SYNC_BRANCH"
+            git pull origin "$SYNC_BRANCH" --rebase
+          else
+            echo "🌱 Branch does not exist. Creating new branch..."
+            git checkout -b "$SYNC_BRANCH"
+          fi
+          
+          # 3. Apply YQ Updates
+          PREFIX="${{ inputs.yaml_key_prefix }}"
+          if [ -z "$PREFIX" ]; then
+            YQ_PATH=".${SERVICE_NAME}"
+          else
+            YQ_PATH="${PREFIX}.${SERVICE_NAME}"
+          fi
+          
+          yq -i "${YQ_PATH}.image.repository = \"${REPO_PATH}\"" ${{ inputs.images_yaml_path }}
+          yq -i "${YQ_PATH}.image.tag = \"${NEW_TAG}\"" ${{ inputs.images_yaml_path }}
+          
+          # 4. Commit and Push
+          git add ${{ inputs.images_yaml_path }}
+          if git diff-index --quiet HEAD; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          
+          git commit -m "deploy: update ${SERVICE_NAME} to ${NEW_TAG}"
+          git push origin "$SYNC_BRANCH"
+          
+          # 5. Create PR using official GitHub CLI if it doesn't exist
+          export GH_TOKEN=${{ secrets.INFRA_REPO_PAT }}
+          PR_EXISTS=$(gh pr list --head "$SYNC_BRANCH" --json number --jq 'length')
+          
+          if [ "$PR_EXISTS" -eq "0" ]; then
+            echo "Creating new PR..."
+            gh pr create \
+              --base ${{ inputs.target_branch }} \
+              --head "$SYNC_BRANCH" \
+              --title "Infra Update: ${{ github.head_ref || github.ref_name }}" \
+              --body "Automated image update from \`${SERVICE_NAME}\`."
+          else
+            echo "✅ PR already exists. Our push just updated it automatically!"
+          fi
