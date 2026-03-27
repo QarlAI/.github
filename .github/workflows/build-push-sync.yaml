@@ -27,8 +27,7 @@ on:
     secrets:
       INFRA_REPO_PAT:
         required: true
-      ANTHROPIC_API_KEY:
-        required: true
+
 
 jobs:
   build-and-sync:
