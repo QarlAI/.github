@@ -85,7 +85,7 @@ jobs:
         if: steps.meta.outputs.tag != ''
         uses: actions/checkout@v4
         with:
-          repository: QarlAI/qarl-studio-infra
+          repository: QarlAI/test-repo2
           token: ${{ secrets.INFRA_REPO_PAT }}
           path: infra-repo
           fetch-depth: 0 
