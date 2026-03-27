@@ -121,34 +121,17 @@ jobs:
           REPO_PATH="us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${SERVICE_NAME}"
           SYNC_BRANCH="sync/${{ github.head_ref || github.ref_name }}"
           
-          echo "🏁 Target Sync Branch: $SYNC_BRANCH"
-          
-          # 1. Fetch the absolute latest from GitHub
           git fetch origin
           
-          # 2. Check if the PR branch already exists on GitHub
           if git ls-remote --exit-code --heads origin "$SYNC_BRANCH"; then
-            echo "✅ PR Branch exists! Reaching into the branch to grab the already-updated images.yaml..."
-            
-            # This forcibly overwrites our local file with the one from the PR
             git checkout origin/"$SYNC_BRANCH" -- ${{ inputs.images_yaml_path }}
-            echo "📥 Successfully pulled file from PR branch."
           else
-            echo "❌ PR Branch does not exist yet. Using the base branch version."
+            echo "PR Branch does not exist yet. Using the base branch version."
           fi
 
-          echo "================ BEFORE EDIT ================"
-          cat ${{ inputs.images_yaml_path }}
-          echo "============================================="
-          
-          
-          # 4. Apply the new tag
+
           yq -i "${{ inputs.yaml_key_prefix }}.image.repository = \"${REPO_PATH}\"" ${{ inputs.images_yaml_path }}
           yq -i "${{ inputs.yaml_key_prefix }}.image.tag = \"${NEW_TAG}\"" ${{ inputs.images_yaml_path }}
-
-          echo "================ AFTER EDIT ================="
-          cat ${{ inputs.images_yaml_path }}
-          echo "============================================="
 
       - name: Create or Update Infra PR
         if: steps.meta.outputs.tag != ''
@@ -157,7 +140,6 @@ jobs:
           token: ${{ secrets.INFRA_REPO_PAT }}
           path: infra-repo
           branch: sync/${{ github.head_ref || github.ref_name }}
-          # THIS is where the target branch goes to tell the PR where to merge
           base: ${{ inputs.target_branch }}
           title: "Infra Update: ${{ github.head_ref || github.ref_name }}"
           commit-message: "deploy: update ${{ inputs.target_repo }} to ${{ steps.meta.outputs.tag }}"
