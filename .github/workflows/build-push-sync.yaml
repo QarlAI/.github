@@ -77,7 +77,7 @@ jobs:
           context: .
           push: true
           # Using your target_repo input here!
-          tags: us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ github.repository.name }}:${{ steps.meta.outputs.tag }}
+          tags: us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ inputs.target_repo }}:${{ steps.meta.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
         
