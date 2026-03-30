@@ -150,15 +150,13 @@ jobs:
         with:
           name: ${{ inputs.prebuilt-tag }}
           path: /tmp
-
-      - name: Load prebuilt image
-        if: steps.meta.outputs.tag != '' && inputs.prebuilt-tag != ''
-        run: docker load -i /tmp/${{ inputs.prebuilt-tag }}.tar
+          
       - name: Tag and Push
         if: steps.meta.outputs.tag != '' && inputs.prebuilt-tag != ''
         run: |
-          docker tag ${{ inputs.prebuilt-tag }} us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ inputs.target_repo }}:${{ steps.meta.outputs.tag }}
-          docker push us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ inputs.target_repo }}:${{ steps.meta.outputs.tag }}
+          docker buildx imagetools create \
+            --tag us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ inputs.target_repo }}:${{ steps.meta.outputs.tag }} \
+            ${{ inputs.prebuilt-tag }}
 
       - name: Checkout Infra Repo
         if: steps.meta.outputs.tag != ''
