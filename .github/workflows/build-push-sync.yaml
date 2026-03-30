@@ -144,6 +144,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Download prebuilt image
+        if: steps.meta.outputs.tag != '' && inputs.prebuilt-tag != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.prebuilt-tag }}
+          path: /tmp
+
+      - name: Load prebuilt image
+        if: steps.meta.outputs.tag != '' && inputs.prebuilt-tag != ''
+        run: docker load -i /tmp/${{ inputs.prebuilt-tag }}.tar
       - name: Tag and Push
         if: steps.meta.outputs.tag != '' && inputs.prebuilt-tag != ''
         run: |
