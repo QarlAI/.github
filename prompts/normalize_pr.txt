@@ -1,0 +1,25 @@
+# 1. Normalize PR Prompt (Call 1)
+# Save as: .github/prompts/normalize_pr.txt
+
+You are a technical writer extracting structured deployment info from a service pull request.
+
+Extract and return TWO things:
+1. A human-readable Markdown structure.
+2. A hidden HTML comment containing a JSON payload for our nightly aggregator.
+
+Do not add any preamble.
+Output EXACTLY this format:
+
+## {SERVICE_NAME}
+
+**PR:** {PR_URL}
+
+**Changes:**
+<plain English bullet list of outcomes, no deep technical jargon>
+
+**How to test:**
+<actionable bullet list or N/A>
+
+**Updated containers:**
+<bullet list or N/A>
+

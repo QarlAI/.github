@@ -47,6 +47,13 @@ jobs:
       - name: Checkout Service Repo
         uses: actions/checkout@v4
 
+      - name: Checkout Central .github Repo (for AI Prompts)
+        uses: actions/checkout@v4
+        with:
+          repository: QarlAI/.github
+          path: shared-github
+          token: ${{ secrets.INFRA_REPO_PAT }}
+
       - name: Set Deployment Metadata
         id: meta
         run: |
@@ -73,14 +80,18 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
+          # Read the prompt template from the central repo
+          INSTRUCTIONS=$(cat shared-github/prompts/normalize_pr.txt)
+
           PROMPT=$(jq -n \
+            --arg instructions "$INSTRUCTIONS" \
             --arg service  "$SERVICE_NAME" \
             --arg pr_url   "$PR_URL" \
             --arg pr_title "$PR_TITLE" \
             --arg pr_body  "${PR_BODY:-*(no description provided)*}" \
             '{
               role: "user",
-              content: ("You are a technical writer extracting structured deployment info from a service pull request.\n\nService: " + $service + "\nPR title: " + $pr_title + "\nPR URL: " + $pr_url + "\nPR body:\n" + $pr_body + "\n\n---\n\nExtract and return ONLY the following Markdown structure. If information for a section is not present, write \"N/A\".\n\nDo not add any preamble or commentary outside the structure.\n\n## " + $service + "\n\n**PR:** <link>\n\n**Changes:**\n<bullet list of changes>\n\n**How to test:**\n<bullet list or N/A>\n\n**Updated containers:**\n<bullet list of container/image names or N/A>")
+              content: ($instructions + "\n\n### SOURCE DATA\nService: " + $service + "\nPR Title: " + $pr_title + "\nPR URL: " + $pr_url + "\nPR Body:\n" + $pr_body)
             }')
 
           RESPONSE=$(curl --silent --show-error \
@@ -208,13 +219,6 @@ jobs:
 
           # ---------------------------------------------------------------
           # 5. Build the infra PR body.
-          #
-          # First PR for this branch:
-          #   → Write THIS_SUMMARY directly.
-          #
-          # PR already exists (another service already wrote their summary):
-          #   → Call 2: Ask Claude to merge EXISTING_BODY + THIS_SUMMARY
-          #     into one cohesive unified description.
           # ---------------------------------------------------------------
 
           PR_NUMBER=$(gh pr list \
@@ -244,12 +248,15 @@ jobs:
               --json body --jq '.body')
 
             # Call 2: Merge
+            MERGE_INSTRUCTIONS=$(cat ../shared-github/prompts/merge_prs.txt)
+
             MERGE_PROMPT=$(jq -n \
+              --arg instructions "$MERGE_INSTRUCTIONS" \
               --arg existing "$EXISTING_BODY" \
               --arg incoming "$THIS_SUMMARY" \
               '{
                 role: "user",
-                content: ("You are a technical writer maintaining a GitOps pull request description.\n\nThe PR description below already contains structured summaries for one or more services. A new service has just been added to this deployment.\n\n## Existing PR description\n\n" + $existing + "\n\n---\n\n## New service summary to incorporate\n\n" + $incoming + "\n\n---\n\nMerge the two into a single cohesive PR description. Rules:\n- Keep the same per-service structure: **PR**, **Changes**, **How to test**, **Updated containers**.\n- Add the new service as its own ## section.\n- Add or update a ## Summary section at the top that gives a one or two sentence overview of the whole deployment.\n- Do not remove or alter existing service sections except to fix obvious duplication.\n- Output only the final Markdown. No preamble.")
+                content: ($instructions + "\n\n## Existing PR description\n\n" + $existing + "\n\n---\n\n## New service summary\n\n" + $incoming)
               }')
 
             MERGE_RESPONSE=$(curl --silent --show-error \
