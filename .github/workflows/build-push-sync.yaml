@@ -11,10 +11,10 @@ on:
         required: true
         type: string
         description: "Branch name (e.g., develop, main)"
-      images_yaml_path:
+      images_yaml_paths:
         required: true
         type: string
-        description: "Path to the values file (e.g., helm/qarl-studio/images.yaml)"
+        description: "Newline-separated list of paths to values files"
       target_repo:
         required: true
         type: string
@@ -205,11 +205,14 @@ jobs:
             YQ_PATH="${PREFIX}.${SERVICE_NAME}"
           fi
 
-          yq -i "${YQ_PATH}.image.repository = \"${REPO_PATH}\"" ${{ inputs.images_yaml_path }}
-          yq -i "${YQ_PATH}.image.tag = \"${NEW_TAG}\"" ${{ inputs.images_yaml_path }}
+          while IFS= read -r FILE_PATH; do
+            [ -z "$FILE_PATH" ] && continue
+            yq -i "${YQ_PATH}.image.repository = \"${REPO_PATH}\"" "$FILE_PATH"
+            yq -i "${YQ_PATH}.image.tag = \"${NEW_TAG}\"" "$FILE_PATH"
+            git add "$FILE_PATH"
+          done <<< "${{ inputs.images_yaml_paths }}"
 
           # 4. Commit and Push
-          git add ${{ inputs.images_yaml_path }}
           if git diff-index --quiet HEAD; then
             echo "No changes to commit."
           else
