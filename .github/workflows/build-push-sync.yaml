@@ -1,4 +1,4 @@
-name: CI/CD - Shared Build, Push, and Sync Infra
+name: GitOps Sync
 
 on:
   workflow_call:
@@ -11,6 +11,7 @@ on:
         required: true
         type: string
         description: "Branch name (e.g., develop, main)"
+<<<<<<< Updated upstream
       images_yaml_path:
         required: true
         type: string
@@ -29,6 +30,24 @@ on:
         default: ""
         type: string
         description: "Optional tag to container prebuilt in previous step"
+=======
+      image_name:
+        required: true
+        type: string
+        description: "Image name in registry (e.g., parakeet-triton)"
+      prebuilt_tag:
+        required: true
+        type: string
+        description: "Full prebuilt image ref pushed to staging (e.g., us-docker.pkg.dev/.../image:prebuilt-abc123)"
+      yaml_key:
+        required: true
+        type: string
+        description: "Full dot-path in YAML (e.g., .parakeet-asr.triton)"
+      images_yaml_paths:
+        required: true
+        type: string
+        description: "Newline-separated list of paths to values files"
+>>>>>>> Stashed changes
     secrets:
       INFRA_REPO_PAT:
         required: true
@@ -36,7 +55,7 @@ on:
         required: true
 
 jobs:
-  build-and-sync:
+  sync:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     permissions:
@@ -44,9 +63,6 @@ jobs:
       id-token: write
 
     steps:
-      - name: Checkout Service Repo
-        uses: actions/checkout@v4
-
       - name: Checkout Central .github Repo (for AI Prompts)
         uses: actions/checkout@v4
         with:
@@ -67,7 +83,7 @@ jobs:
           echo "tag=${SHORT_SHA}" >> $GITHUB_OUTPUT
 
       # -----------------------------------------------------------------------
-      # Call 1: Normalize this service's PR into a structured summary.
+      # Normalize this service's PR into a structured summary.
       # Only runs on pull_request events (skipped on direct push/merge).
       # -----------------------------------------------------------------------
       - name: Normalize Service PR
@@ -75,7 +91,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          SERVICE_NAME: ${{ inputs.target_repo }}
+          SERVICE_NAME: ${{ inputs.image_name }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
@@ -127,7 +143,6 @@ jobs:
       # -----------------------------------------------------------------------
 
       - name: Authenticate to Google Cloud
-        if: steps.meta.outputs.tag != ''
         id: auth
         uses: google-github-actions/auth@v3
         with:
@@ -136,34 +151,20 @@ jobs:
           service_account: 'qarl-studio-backend-sa@qarl-studio.iam.gserviceaccount.com'
 
       - name: Authenticate Docker to GAR
-        if: steps.meta.outputs.tag != ''
         run: gcloud auth configure-docker us-docker.pkg.dev --quiet
 
       - name: Set up Docker Buildx
-        if: steps.meta.outputs.tag != '' 
         uses: docker/setup-buildx-action@v3
         with:
           driver: docker-container
 
-      - name: Build and Push
-        if: steps.meta.outputs.tag != '' && inputs.prebuilt-tag == ''
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ inputs.target_repo }}:${{ steps.meta.outputs.tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Tag and Push
-        if: steps.meta.outputs.tag != '' && inputs.prebuilt-tag != ''
+      - name: Re-tag to Final Registry
         run: |
           docker buildx imagetools create \
-            --tag us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ inputs.target_repo }}:${{ steps.meta.outputs.tag }} \
-            ${{ inputs.prebuilt-tag }}
+            --tag us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ inputs.image_name }}:${{ steps.meta.outputs.tag }} \
+            ${{ inputs.prebuilt_tag }}
 
       - name: Checkout Infra Repo
-        if: steps.meta.outputs.tag != ''
         uses: actions/checkout@v4
         with:
           repository: QarlAI/qarl-studio-infra
@@ -172,16 +173,15 @@ jobs:
           fetch-depth: 0
 
       - name: GitOps Sync & Create/Update PR
-        if: steps.meta.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.INFRA_REPO_PAT }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           THIS_SUMMARY: ${{ steps.normalize.outputs.summary }}
-          SERVICE_NAME: ${{ inputs.target_repo }}
+          SERVICE_NAME: ${{ inputs.image_name }}
         run: |
           cd infra-repo
           NEW_TAG="${{ steps.meta.outputs.tag }}"
-          REPO_PATH="us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${SERVICE_NAME}"
+          REPO_PATH="us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ inputs.image_name }}"
           SYNC_BRANCH="sync/${{ github.head_ref || github.ref_name }}"
 
           # 1. Setup Git Identity
@@ -198,6 +198,7 @@ jobs:
           fi
 
           # 3. Apply YQ Updates
+<<<<<<< Updated upstream
           PREFIX="${{ inputs.yaml_key_prefix }}"
           if [ -z "$PREFIX" ]; then
             YQ_PATH=".${SERVICE_NAME}"
@@ -207,6 +208,14 @@ jobs:
 
           yq -i "${YQ_PATH}.image.repository = \"${REPO_PATH}\"" ${{ inputs.images_yaml_path }}
           yq -i "${YQ_PATH}.image.tag = \"${NEW_TAG}\"" ${{ inputs.images_yaml_path }}
+=======
+          while IFS= read -r FILE_PATH; do
+            [ -z "$FILE_PATH" ] && continue
+            yq -i "${{ inputs.yaml_key }}.image.repository = \"${REPO_PATH}\"" "$FILE_PATH"
+            yq -i "${{ inputs.yaml_key }}.image.tag = \"${NEW_TAG}\"" "$FILE_PATH"
+            git add "$FILE_PATH"
+          done <<< "${{ inputs.images_yaml_paths }}"
+>>>>>>> Stashed changes
 
           # 4. Commit and Push
           git add ${{ inputs.images_yaml_path }}
