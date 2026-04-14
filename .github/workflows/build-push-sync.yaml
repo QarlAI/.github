@@ -11,26 +11,6 @@ on:
         required: true
         type: string
         description: "Branch name (e.g., develop, main)"
-<<<<<<< Updated upstream
-      images_yaml_path:
-        required: true
-        type: string
-        description: "Path to the values file (e.g., helm/qarl-studio/images.yaml)"
-      target_repo:
-        required: true
-        type: string
-        description: "Target repo to update"
-      yaml_key_prefix:
-        required: false
-        default: ""
-        type: string
-        description: "The root key in the yaml (e.g., .qarl-backend-api)"
-      prebuilt-tag:
-        required: false
-        default: ""
-        type: string
-        description: "Optional tag to container prebuilt in previous step"
-=======
       image_name:
         required: true
         type: string
@@ -47,7 +27,6 @@ on:
         required: true
         type: string
         description: "Newline-separated list of paths to values files"
->>>>>>> Stashed changes
     secrets:
       INFRA_REPO_PAT:
         required: true
@@ -198,27 +177,14 @@ jobs:
           fi
 
           # 3. Apply YQ Updates
-<<<<<<< Updated upstream
-          PREFIX="${{ inputs.yaml_key_prefix }}"
-          if [ -z "$PREFIX" ]; then
-            YQ_PATH=".${SERVICE_NAME}"
-          else
-            YQ_PATH="${PREFIX}.${SERVICE_NAME}"
-          fi
-
-          yq -i "${YQ_PATH}.image.repository = \"${REPO_PATH}\"" ${{ inputs.images_yaml_path }}
-          yq -i "${YQ_PATH}.image.tag = \"${NEW_TAG}\"" ${{ inputs.images_yaml_path }}
-=======
           while IFS= read -r FILE_PATH; do
             [ -z "$FILE_PATH" ] && continue
             yq -i "${{ inputs.yaml_key }}.image.repository = \"${REPO_PATH}\"" "$FILE_PATH"
             yq -i "${{ inputs.yaml_key }}.image.tag = \"${NEW_TAG}\"" "$FILE_PATH"
             git add "$FILE_PATH"
           done <<< "${{ inputs.images_yaml_paths }}"
->>>>>>> Stashed changes
 
           # 4. Commit and Push
-          git add ${{ inputs.images_yaml_path }}
           if git diff-index --quiet HEAD; then
             echo "No changes to commit."
           else
