@@ -52,7 +52,11 @@ jobs:
       - name: Set Deployment Metadata
         id: meta
         run: |
-          SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha || github.sha }}" | cut -c1-7)
+          if [[ "${{ github.event.pull_request.merged }}" == "true" ]]; then
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          else
+            SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha || github.sha }}" | cut -c1-7)
+          fi
 
           if [[ "${{ github.event.pull_request.merged }}" == "true" ]] || [[ "${{ github.event_name }}" != "pull_request" ]]; then
             echo "repo=dockerimg" >> $GITHUB_OUTPUT
