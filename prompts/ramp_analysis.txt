@@ -18,7 +18,12 @@ Analyze across two axes:
 
 You decide what counts as a knee, spike, or "flat" — use judgment, but be specific about which numbers led you there.
 
-Emoji rules: 🟢 if all stages flat and no failures. 🟡 if any monotonic degradation or time-axis anomaly but zero failures. 🔴 if utterance_timeouts > 0 or session_errors non-empty.
+Significance bar (apply before flagging anything):
+- Do NOT label a stage a "scaling bottleneck" / "trend" / "monotonic degradation" unless BOTH (a) the across-N change is >2× the stage's intra-window noise (gauge by spread across that stage's `time_buckets` within a single N), AND (b) the stage contributes >5% of e2e latency at the highest N.
+- With only 2–3 N data points, prefer "observation" or "directional signal" wording — 3 arbitrary points are monotonic ~17% of the time, so monotonicity alone is not a trend.
+- Small absolute deltas relative to e2e (e.g. a 40 ms shift on a 9000 ms e2e) belong in a one-line note, not in Key findings as a flagged issue.
+
+Emoji rules: 🟢 if all stages flat and no failures. 🟡 if any stage meets the significance bar above OR a time-axis anomaly is clearly outside intra-window noise, with zero failures. 🔴 if utterance_timeouts > 0 or session_errors non-empty.
 
 Output Slack-friendly markdown, this exact structure:
 
