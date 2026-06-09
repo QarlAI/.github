@@ -65,5 +65,6 @@ Hard rules:
 - Every number cited MUST be computable from the CSV. Never invent numbers.
 - For a flagged stage, the typical citation is the per-`n` progression plus one delta/ratio summary. For unflagged stages, don't dump per-`n` tables — one summary line is enough.
 - Do NOT cite source code paths (no file:line).
+- Output ONLY the structured summary above. Do NOT show calculation steps, sorted arrays, percentile derivation, or any intermediate work — compute silently and present the final numbers.
 - Total output ≤ 350 words.
 - If the run is fully healthy (no monotonic degradation, no time-axis anomaly, no timeouts, no `race_server`), output ONLY: "🟢 Voice Ramp Nightly — target=N stagger=Xs sustain=Ys. All stages flat across concurrency. Nothing to investigate."
