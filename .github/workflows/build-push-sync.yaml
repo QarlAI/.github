@@ -40,6 +40,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      pull-requests: write
 
     steps:
       - name: Checkout Central .github Repo (for AI Prompts)
@@ -71,7 +72,7 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Normalize Service PR
         id: normalize
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SERVICE_NAME: ${{ inputs.image_name }}
@@ -147,7 +148,54 @@ jobs:
             --tag us-docker.pkg.dev/qarlproductionregistries/${{ steps.meta.outputs.repo }}/${{ inputs.image_name }}:${{ steps.meta.outputs.tag }} \
             ${{ inputs.prebuilt_tag }}
 
+      # -----------------------------------------------------------------------
+      # Surface the built image ref back on the service PR via a single sticky
+      # comment (updated in place each push). This is the only place the image
+      # is reported while a PR is a draft, since the infra PR is suppressed.
+      # -----------------------------------------------------------------------
+      - name: Comment Built Image on Service PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          IMAGE_REPO: ${{ steps.meta.outputs.repo }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          IMAGE_REF="us-docker.pkg.dev/qarlproductionregistries/${IMAGE_REPO}/${IMAGE_NAME}:${IMAGE_TAG}"
+          MARKER="<!-- gitops-built-image -->"
+
+          if [[ "$IMAGE_REPO" == "dockerimgstaging" ]]; then
+            STAGE="staging"
+          else
+            STAGE="production"
+          fi
+
+          DRAFT_NOTE=""
+          if [[ "$IS_DRAFT" == "true" ]]; then
+            DRAFT_NOTE=$'\n\n_Infra PR is skipped while this PR is a draft. Mark it ready for review to open/update the infra PR._'
+          fi
+
+          BODY=$(printf '%s\n### 🐳 Built image (%s)\n`%s`%s' \
+            "$MARKER" "$STAGE" "$IMAGE_REF" "$DRAFT_NOTE")
+
+          # Find the existing sticky comment (by hidden marker) and update it;
+          # otherwise create a new one.
+          COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" | head -n1)
+
+          if [[ -n "$COMMENT_ID" ]]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${COMMENT_ID}" -f body="$BODY"
+            echo "✅ Updated sticky image comment on ${REPO}#${PR_NUMBER}."
+          else
+            gh api -X POST "repos/${REPO}/issues/${PR_NUMBER}/comments" -f body="$BODY"
+            echo "✅ Created sticky image comment on ${REPO}#${PR_NUMBER}."
+          fi
+
       - name: Checkout Infra Repo
+        if: github.event.pull_request.draft != true
         uses: actions/checkout@v4
         with:
           repository: QarlAI/qarl-studio-infra
@@ -156,6 +204,7 @@ jobs:
           fetch-depth: 0
 
       - name: GitOps Sync & Create/Update PR
+        if: github.event.pull_request.draft != true
         env:
           GH_TOKEN: ${{ secrets.INFRA_REPO_PAT }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
